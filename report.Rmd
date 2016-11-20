@@ -1,0 +1,177 @@
+---
+title: "Activity Monitoring Data"
+author: "Daniel Frederico Lins Leite"
+date: "20 November 2016"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+
+library(dplyr)
+library(ggplot2)
+```
+
+## Load and process data
+
+We will analyze the data set "Activity monitoring data"" (amdata) that contains data at 5 minute intervals from an anonymous individual collected during the months of October and November, 2012 and include the number of steps taken in 5 minute intervals each day.
+
+```{r echo=TRUE}
+unzip("activity.zip")
+amdata <- read.csv('activity.csv')
+completeAmData <- amdata[complete.cases(amdata$steps),]
+
+qtyNA <- sum(is.na(amdata$steps))
+pNA <- qtyNA / nrow(amdata)
+qtyZero <- sum(completeAmData$steps == 0)
+pZero <- qtyZero / nrow(amdata)
+```
+
+The data set contains both NA and zero values in the step colums:  
+*Number of NA:* `r qtyNA` (`r format(round(pNA,2), nsmall=2)`%)  
+*Number of Zero:* `r qtyZero` (`r format(round(pZero,2), nsmall=2)`%)  
+
+To better understand the distribution of steps we will generate two histograms, specially because of the high number of both NA and zero values.
+
+```{r}
+completewithzero <- completeAmData
+completewithzero$Cat <- rep("With Zero", nrow(completewithzero))
+
+completewithoutzero <- completeAmData[completeAmData$steps > 0,]
+completewithoutzero$Cat <- rep("Without Zero", nrow(completewithoutzero))
+
+histData <- merge(completewithzero, completewithoutzero, all = TRUE)
+histData$Cat = ordered(histData$Cat, levels = c("With Zero","Without Zero"))
+
+ggplot(histData, aes(x = steps)) +
+  geom_histogram( binwidth = 30) +
+  facet_grid(Cat ~ ., scales = "free_y") +
+  xlab("Steps") +
+  ylab("# steps") +
+  ggtitle("Steps Distribution")
+```
+
+## Steps by day
+
+To better understand the behaviour of the individual, we can also analyze the distribution of the sum of steps by day.
+
+```{R}
+stepsByDay <- completeAmData %>%
+  group_by(date) %>%
+  summarize(steps=sum(steps))
+
+completedMean <- mean(stepsByDay$steps)
+completedMedian <- median(stepsByDay$steps)
+
+ggplot(stepsByDay, aes(x = steps)) +
+  geom_histogram(binwidth = 2000) +
+  ggtitle("Steps by Day") +
+  xlab("Steps") +
+  ylab("# days")
+```
+
+Summary:  
+*Mean:* `r format(completedMean, nsmall = 2)`  
+*Median:* `r format(completedMedian, nsmall = 2)`
+
+```{R}
+meanStepsByInterval <- completeAmData %>%
+  group_by(interval) %>%
+  summarize(steps=mean(steps))
+maximum <- meanStepsByInterval[meanStepsByInterval$steps == max(meanStepsByInterval$steps),]
+
+maximumTick <- sprintf("%02i:%02i", round(maximum$interval/100,0), (maximum$interval %% 100))
+
+ggplot(meanStepsByInterval, aes(x = interval, y = steps)) +
+  geom_line() +
+  geom_point(aes(x = maximum$interval, y = maximum$steps), colour = 'red') +
+  scale_x_discrete(name ="Hour", 
+                    breaks=c(0, 500, 1000, 1500, 2000, maximum$interval),
+                   limits=c(0, 500, 1000, 1500, 2000, maximum$interval),
+                   labels=c("00:00", "05:00", "10:00", "15:00", "20:00", maximumTick)
+                   ) +
+  ggtitle("Mean Steps per Interval")
+```
+
+Summary of Mean Steps per Day:  
+Maximum `r format(maximum$steps, nsmall=2)` steps at `r maximum$interval` interval
+
+## Analyzing NA values
+
+The data set contains `r sum(is.na(amdata$steps))` lines with empty value for the steps.
+
+This values will be deduced using the "mean step by interval" above. Every row that contains a NA at the step column will be equal to the mean step count of that interval.  
+
+For this we will use the Coalesce method, that will always choose the first non-NA, non-NULL value in the order specified.
+
+```{R}
+
+coalesce <- function(...) {
+  Reduce(function(x, y) {
+    i <- which(is.na(x))
+    x[i] <- y[i]
+    x},
+    list(...))
+}
+```
+```{R echo=TRUE}
+
+filledData <- amdata
+filledData$steps <- coalesce(filledData$steps,
+  as.integer(
+    left_join(filledData, meanStepsByInterval, by = 'interval')$steps.y))
+```
+
+With this transformation, the data set now contains the following histogram.
+
+```{R}
+filledStepsByDay <- filledData %>%
+  group_by(date) %>%
+  summarize(steps=sum(steps))
+
+ggplot(filledStepsByDay, aes(x = steps)) +
+  geom_histogram(binwidth = 2000) +
+  ylab("# days") +
+  ggtitle("Steps by Day (Deducing NA values)")
+
+filledMean <- mean(filledStepsByDay$steps)
+filledMedian <- median(filledStepsByDay$steps)
+```
+
+Summary of Steps by Day (Deducing NA values):  
+*Mean:* `r format(filledMean, nsmall = 2)`  
+*Median:* `r format(filledMedian, nsmall = 2)`
+
+## Comparing the impact
+
+We can compare the impact of the change had comparing the mean and the median statistics before and after the modification:  
+
+*Mean*  
+- Before: `r format(completedMean, nsmall = 2)`    
+- After: `r format(filledMean, nsmall = 2)`    
+*Median*  
+- Before: `r format(completedMedian, nsmall = 2)`    
+- After: `r format(filledMedian, nsmall = 2)`    
+
+## Analysis on Weekends
+
+To better understand the individual we can also analyze his behaviour comparing the quantity of steps monitored on weekdays and on weekends.
+
+```{R}
+
+filledData$weekday <- weekdays(as.Date(filledData$date))
+filledData$weekday <- as.factor(ifelse(filledData$weekday %in% c('Saturday',"Sunday"), "Weekend", "Weekday"))
+
+filledStepsByInterval = filledData %>%
+  group_by(interval,weekday) %>%
+  summarize(steps=mean(steps))
+
+ggplot(filledStepsByInterval, aes(x = interval, y = steps)) +
+  geom_line() +
+  ylab("# steps") +
+  facet_grid(weekday ~ .) +
+  scale_x_discrete(name ="Hour", 
+                    breaks=c(0, 500, 1000, 1500, 2000),
+                   limits=c(0, 500, 1000, 1500, 2000),
+                   labels=c("00:00", "05:00", "10:00", "15:00", "20:00"))
+```

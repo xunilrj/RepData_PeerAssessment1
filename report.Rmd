@@ -2,7 +2,9 @@
 title: "Activity Monitoring Data"
 author: "Daniel Frederico Lins Leite"
 date: "20 November 2016"
-output: html_document
+output:
+  md_document:
+    variant: markdown_github
 ---
 
 ```{r setup, include=FALSE}
